@@ -1,0 +1,197 @@
+\appendix
+\section{Implementation Details and Result Identities}
+
+\subsection{Underlying Networks and Candidate Processing}
+
+The shared front end uses an association threshold $D_{vc}=\min(2.0,\max(0.8,\tfrac12\min(\ell_v,\ell_c)))$. Valid pairs require $d_{vc}\leq D_{vc}$, a height difference no greater than the larger box height, and size ratios no greater than 2 in every dimension. Let $r_j=\max(s_j^v/s_j^c,s_j^c/s_j^v)$. The pairing cost is
+
+\[
+\begin{aligned}
+C_{vc}={}&\frac{d_{vc}}{D_{vc}}+\frac{0.20}{3}\sum_{j=1}^{3}\log r_j\\
+&+0.15(1-|\cos(\theta_v-\theta_c)|).
+\end{aligned}
+\]
+
+Invalid associations are discarded after Hungarian assignment. Matched boxes average centers, sizes, and velocities with $\omega_v=p_v^2/(p_v^2+p_c^2)$ and $\omega_c=1-\omega_v$. Unmatched boxes retain original geometry. Letting $m=\max(p_v,p_c)$, the shared base score is
+
+\[
+s_0=\begin{cases}
+\min(0.999,m+\beta(1-m)\sqrt{p_vp_c}), & b\in\mathcal M,\\
+\gamma p, & b\in\mathcal U^v\cup\mathcal U^c,
+\end{cases}
+\]
+
+with $\beta=0.10$ and $\gamma=0.85$.
+
+The Control cooperative branch is initialized from official 55 m weights and fine-tuned for four epochs over 5,960 training frames, totaling 23,840 frame steps. We use AdamW with base learning rate $2\times10^{-5}$, weight decay 0.01, one-GPU micro-batch size 1, gradient accumulation over eight steps, and seed 3407. The image backbone and neck, BEV encoding and embeddings, temporal query interactions, memory bank, initial queries, and reference points are frozen. Updates primarily affect the detection decoder, classification and regression heads, and cooperative fusion components. The new ranker does not retrain these parameters.
+
+Candidate filtering removes nonfinite values and nonpositive sizes. The minimum score is 0.005, and the minimum score for pairing is 0.03. For matched rotations, normalized quaternions satisfying $|\mathbf q_v^\top\mathbf q_c|\geq\cos(\pi/4)$ are aligned to the same hemisphere, weighted, and normalized. Otherwise, the higher-scoring parent's rotation is used. For same-class candidates with center distance below 0.65 m and height difference below 1 m, the lower-scoring candidate is suppressed. At most 500 boxes are output. This is center-distance deduplication, not standard IoU NMS.
+
+The basic tracker uses a planar constant-velocity Kalman state and same-class Hungarian association. For vehicles, the base association threshold is 3 m, the candidate-association and track-birth score threshold is 0.20, confirmation requires two hits, the score threshold for immediate output is 0.65, and maximum retention is 0.50 s. The tracker resets at scene boundaries. All complete-pipeline controls share this configuration.
+
+\subsection{Scene Splits}
+
+Internal-validation fitting scenes are \texttt{scene\_14}, \texttt{scene\_17}, \texttt{scene\_19}, \texttt{scene\_21}, and \texttt{scene\_3}. Held-out scenes are \texttt{scene\_36}, \texttt{scene\_39}, \texttt{scene\_4}, \texttt{scene\_45}, and \texttt{scene\_8}. Explicit fixed-candidate rules and learned ranking share this 5/5 split but differ in parameter selection and training.
+
+The train8 fitting scenes are \texttt{scene\_0}, \texttt{scene\_1}, \texttt{scene\_2}, \texttt{scene\_5}, \texttt{scene\_6}, and \texttt{scene\_7}; held-out scenes are \texttt{scene\_9} and \texttt{scene\_10}. The ranker fits only on the first six scenes, and feature standardization is estimated on the fitting set alone.
+
+\subsection{Original System versus Controlled Baseline}
+
+The historical original UniV2X cooperative system achieves vehicle AP / AMOTA of 32.1785 / 35.0525, close to but not numerically identical to Griffin's reported 32.3 / 34.9. The 31.9480 / 35.2971 values referred to in the source draft's local comparison come from Control cooperative predictions with the common basic tracker, a different system configuration. Control belongs to the UniV2X framework and must not be described as reported or reproduced CoopTrack. The main comparison distinguishes literature performance from local controlled gains.
+
+Base fusion improves AP / AMOTA over the historical original system by approximately +7.0850 / +9.9655, and over the controlled cooperative baseline by +7.3155 / +9.7209. These differences are not interchangeable.
+
+\section{Differences between train8 Offline Evaluations}
+
+This appendix supports internal reproducibility review and explains the two saved train8 result sets. Neither script provides new AMOTA conclusions.
+
+\begin{table}[t]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.12}
+\setlength{\tableusable}{\dimexpr\linewidth-6\tabcolsep\relax}
+\begin{tabular}{>{\raggedright\arraybackslash}p{0.5600\tableusable}>{\raggedright\arraybackslash}p{0.2200\tableusable}>{\raggedright\arraybackslash}p{0.2200\tableusable}}
+\toprule
+Item & \texttt{train8/rank} & \texttt{train8/rank\_eval} \\
+\midrule
+Held-out vehicle AP & 91.1242 to \textbf{93.3845} & 50.9277 to \textbf{52.3256} \\
+Held-out gain & \textbf{+2.2603} & \textbf{+1.3979} \\
+GT filtering & \texttt{num\_lidar\_pts > 0}; horizontal GT distance below 50 m & Neither filter applied \\
+Label tolerance & 2 m & 1 m \\
+Label assignment & One-to-one greedy by distance & Greedy in base-score order \\
+Normalized-distance feature & Included & Excluded \\
+Consistency with official prediction-range filtering & Not yet verified & Not yet verified \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Different GT sets change the recall denominator and are an important reason for the large absolute AP difference. The lower-scoring version cannot therefore be called a stricter official result. Table 7 retains \texttt{rank} as an explicitly identified pilot; neither replaces official validation results. Next, the same model and candidates should be frozen and evaluated with unified official GT and prediction filtering, resolving protocol consistency before interpreting performance differences.
+
+\section{Supplementary Controls and Parameter Sensitivity}
+
+\subsection{Neighboring Rules and Geometry Selection}
+
+
+\begin{table}[t]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.12}
+\renewcommand{\thetable}{C1}
+\caption{Supplementary controls using the same two-branch 55 m caches and tracker, with base and subsequent higher-AP results.}
+\setlength{\tableusable}{\dimexpr\linewidth-6\tabcolsep\relax}
+\begin{tabular}{>{\raggedright\arraybackslash}p{0.5600\tableusable}>{\raggedright\arraybackslash}p{0.2200\tableusable}>{\raggedright\arraybackslash}p{0.2200\tableusable}}
+\toprule
+Rule & Vehicle AP & Vehicle AMOTA \\
+\midrule
+Direct merge and deduplication & 36.6080 & 38.1437 \\
+Scale all vehicle-source scores by 0.85 & 34.9434 & 36.2631 \\
+Confidence filtering + source discount \cite{ref1}: threshold 0.30, vehicle factor 0.90 & 34.1737 & 36.7087 \\
+Confidence filtering + source discount \cite{ref1}: threshold 0.30, vehicle factor 0.80 & 34.1098 & 36.2947 \\
+Cooperative-parent geometry after matching, base scores & 38.1582 & 41.7356 \\
+Vehicle-parent geometry after matching, base scores & 38.9710 & 44.6594 \\
+Higher-scoring-parent geometry after matching, base scores & 38.6412 & 44.0547 \\
+Base fusion (scoring reference) & 39.2635 & 45.0180 \\
+GeoRank explicit linear disagreement & \textbf{39.8568} & 44.6052 \\
+GeoRank explicit multiplicative disagreement & \textbf{39.8746} & 44.6770 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The two filtering-and-discounting rules are inspired by \cite{ref1} and adapted to current independent receiver-vehicle outputs and common center-distance deduplication. They are local rule controls, not a Griffin reproduction of that paper's complete method.
+
+Geometric averaging adds 0.2925 AP over choosing vehicle-parent geometry, while added explicit scoring improves the base reference by another \textbf{0.5933 / 0.6111 AP}. Geometry fusion and geometric relationship scoring are different operations, and their contributions are compared separately.
+
+\subsection{Upstream Predictions and Tracking Configurations}
+
+
+\begin{table*}[t]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.12}
+\renewcommand{\thetable}{C2(a)}
+\caption{Sequential upstream controls and subsequent scoring. The first three rows share the basic tracker and vary upstream predictions. Rows 4--5 are tracking references; the final rows add geometry scoring with fixed Control inputs.}
+\setlength{\tableusable}{\dimexpr\linewidth-10\tabcolsep\relax}
+\begin{tabular}{>{\raggedright\arraybackslash}p{0.4000\tableusable}>{\raggedright\arraybackslash}p{0.1500\tableusable}>{\raggedright\arraybackslash}p{0.1500\tableusable}>{\raggedright\arraybackslash}p{0.1500\tableusable}>{\raggedright\arraybackslash}p{0.1500\tableusable}}
+\toprule
+Setting & Vehicle AP & Vehicle AMOTA & Three-class mAP & Three-class AMOTA \\
+\midrule
+Original official model + same fusion and basic tracking & 39.0399 & 42.9624 & 15.0011 & 15.3831 \\
+Coordinate correction, no fine-tuning + same fusion and basic tracking & 38.9889 & 44.2231 & 15.1313 & 16.7000 \\
+Control + complete base fusion and basic tracking & 39.2635 & 45.0180 & 15.2182 & 17.4278 \\
+Control + complete base fusion and complex tracking reference & 39.2634 & 44.5660 & 15.2191 & 15.6024 \\
+Control + complete base fusion, no additional tracking & 39.2635 & --- & 15.2182 & --- \\
+Control + GeoRank explicit linear disagreement and basic tracking & \textbf{39.8568} & 44.6052 & \textbf{15.3967} & 17.2492 \\
+Control + GeoRank explicit multiplicative disagreement and basic tracking & \textbf{39.8746} & 44.6770 & \textbf{15.4067} & 17.2731 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+Base AP with original weights, corrected but unfine-tuned weights, and Control is 39.0399, 38.9889, and 39.2635, respectively. Added disagreement raises AP to \textbf{39.8568 / 39.8746}. Upstream changes are sequential controls; additional scoring is compared with fixed Control inputs.
+
+The complex-tracking reference achieves 44.5660 vehicle AMOTA, below the basic configuration's 45.0180. More complex tracking does not further improve this metric here. This comparison explains the choice of the basic configuration and is not a new tracking contribution.
+
+
+\begin{table*}[t]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.12}
+\renewcommand{\thetable}{C2(b)}
+\caption{Historical complex-tracker breakdown over all 1,490 frames. The reference is Control + base candidate fusion + historical complex tracking. None of these conditions uses subsequent GeoRank disagreement scoring.}
+\setlength{\tableusable}{\dimexpr\linewidth-10\tabcolsep\relax}
+\begin{tabular}{>{\raggedright\arraybackslash}p{0.4000\tableusable}>{\raggedright\arraybackslash}p{0.1500\tableusable}>{\raggedright\arraybackslash}p{0.1500\tableusable}>{\raggedright\arraybackslash}p{0.1500\tableusable}>{\raggedright\arraybackslash}p{0.1500\tableusable}}
+\toprule
+Historical tracking configuration & Vehicle AP & Vehicle AMOTA & Three-class mAP & Three-class AMOTA \\
+\midrule
+Complete historical complex tracker & 39.2634 & 44.5660 & 15.2191 & 15.6024 \\
+Without secondary association of weak detections & 39.2631 & 43.6091 & 15.2197 & 17.1499 \\
+Without short-term prediction-based gap filling & 39.2634 & 44.5840 & 15.2191 & 15.6973 \\
+Without temporal score bonuses & 39.2635 & 44.5506 & 15.2182 & 15.5973 \\
+Replace with basic motion tracking & 39.2635 & 45.0180 & 15.2182 & 17.4278 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+Removing secondary association for weak detections lowers vehicle AMOTA, while short-term gap filling and temporal score bonuses have smaller effects. The complete complex tracker does not outperform the basic configuration. This table supports tracker selection; it is not the same experiment as the base-tracker front-end ablations in Table 5(d), and tracking changes must not be attributed to geometric scoring.
+
+An existing ungated control also shows that, under the same training budget, gating improves cooperative-network AP / AMOTA by 0.4680 / 1.1479 points, but reduces both by 0.0242 / 0.2363 points after adding identical fusion and historical tracking. Final scoring experiments therefore fix the ungated Control upstream model. This is a single-seed comparison, and network-output and complete-system results are considered separately.
+
+\subsection{Base-Fusion Parameter Sensitivity}
+
+With fixed predictions on the same 55 m validation set, 16 unique parameter configurations cover four one-factor sweeps. Each changes one parameter while keeping others at defaults. The sweeps share the default configuration, so their condition counts cannot simply be added.
+
+
+\begin{table*}[t]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.12}
+\renewcommand{\thetable}{C3}
+\caption{Parameter sweeps and vehicle metric spans. A span is the maximum minus minimum along one sweep, in percentage points.}
+\setlength{\tableusable}{\dimexpr\linewidth-10\tabcolsep\relax}
+\begin{tabular}{>{\raggedright\arraybackslash}p{0.4000\tableusable}>{\raggedright\arraybackslash}p{0.1500\tableusable}>{\raggedright\arraybackslash}p{0.1500\tableusable}>{\raggedright\arraybackslash}p{0.1500\tableusable}>{\raggedright\arraybackslash}p{0.1500\tableusable}}
+\toprule
+Parameter & Default & Values & Vehicle AP span & Vehicle AMOTA span \\
+\midrule
+Maximum pairing distance (m) & 2.0 & 1.0, 1.5, 2.0, 2.5, 3.0 & 0.2073 & 1.8847 \\
+Single-branch scaling $\gamma$ & 0.85 & 0.70, 0.80, 0.85, 0.90, 1.00 & 1.3413 & 1.9155 \\
+Matching bonus $\beta$ & 0.10 & 0, 0.05, 0.10, 0.15, 0.20 & 0.0959 & 0.2682 \\
+Geometry weighting exponent & 2 & 1, 1.5, 2, 3 & 0.0794 & 0.2521 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+Within the tested ranges, vehicle AP varies relatively little with the matching bonus and geometry exponent and is more sensitive to single-branch scaling. Vehicle AMOTA varies more with pairing distance and single-branch scaling. Pairing distance is additionally bounded by candidate length, so a flat curve alone does not imply that the threshold is ineffective. Class behavior also differs: bicycle AMOTA spans 6.0430 points along the single-branch scaling sweep.
+
+This is completed development-set parameter sensitivity analysis. We retain the original defaults rather than replace the main result with the highest AP or AMOTA from a sweep. It is not evidence of multi-seed stability. All 16 settings and three-class results remain available through the internal source records.
+
+\subsection{Real Cases and Parent-Box Errors}
+
+In a successful supplementation case, base fusion retains a target detected by the independent vehicle branch but missed by the cooperative branch in the same 55 m sample. This illustrates candidate supplementation using existing predictions and GT; it does not show learned rescoring correcting box positions.
+
+In a failure case, the cooperative parent has center error approximately 1.821 m, which increases to approximately 2.013 m after fusion, crossing the 2 m matching tolerance. The fused score nevertheless remains approximately 0.969. Neither high confidence nor geometric fusion guarantees a correct match, motivating separate analysis of geometry processing and quality ranking.
+
+Among actual paired vehicle parents that individually match the same GT, the vehicle parent has the smaller center error in 50.30\% of cases. This conditional-subset analysis is neither a full-dataset accuracy estimate nor an estimate of causal improvement.
